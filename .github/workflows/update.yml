@@ -1,0 +1,40 @@
+name: update times
+on:
+  schedule:
+    - cron: "17 2,8,14,20 * * *"   # 4 times a day (UTC = Moroccan time), off the hour
+  workflow_dispatch: {}
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency: { group: update, cancel-in-progress: false }
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment: { name: github-pages }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q
+      # ROBOT_MODE=demo publishes calculated times instead (kind "estimate").
+      - name: Run robot
+        env:
+          PRAYMA_SIGNING_KEY: ${{ secrets.PRAYMA_SIGNING_KEY }}
+        run: python -m robot.run --site site ${{ vars.ROBOT_MODE == 'demo' && '--demo' || '' }}
+      - name: Commit if changed
+        id: commit
+        run: |
+          if [ -n "$(git status --porcelain site)" ]; then
+            git config user.name "prayma-robot"
+            git config user.email "actions@users.noreply.github.com"
+            v=$(python -c "import json;print(json.load(open('site/manifest.json'))['version'])")
+            git add site && git commit -m "data: v$v" && git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.commit.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-pages-artifact@v3
+        with: { path: site }
+      - if: steps.commit.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        uses: actions/deploy-pages@v4
